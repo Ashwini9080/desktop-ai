@@ -39,6 +39,7 @@ from core.greeting import get_greeting
 from core.news import get_news, get_outlet_news, items_to_spoken_summary
 from core.news_ui import show_news_popup
 from core.stocks import get_stock_analysis
+from core.mobile_server import start_mobile_server, get_local_ip
 
 import keyboard          # pip install keyboard
 import pystray           # pip install pystray
@@ -77,7 +78,7 @@ def _make_icon_image(size: int = 64) -> Image.Image:
 # Core command pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 
-def handle_command(text: str, root: tk.Tk) -> None:
+def handle_command(text: str, root: tk.Tk) -> str:
     """Full pipeline: classify → Gemini fallback → execute → speak.
 
     speak() is marshalled back to the Tk main thread via root.after()
@@ -86,10 +87,13 @@ def handle_command(text: str, root: tk.Tk) -> None:
     Args:
         text: Raw user command string (voice or typed).
         root: The Tk root window — used for root.after() marshalling.
+
+    Returns:
+        Spoken response or confirmation string.
     """
     text = text.strip()
     if not text:
-        return
+        return ""
 
     log.info("Command received: %r", text)
 
@@ -116,7 +120,7 @@ def handle_command(text: str, root: tk.Tk) -> None:
             # Show popup on main thread, speak on current (daemon) thread
             root.after(0, show_news_popup, root, items, f"{label} Headlines")
             root.after(0, speak, spoken)
-            return
+            return spoken
 
         if action == "get_outlet_news":
             log.info("Fetching outlet news [outlet=%s] …", target)
@@ -125,7 +129,7 @@ def handle_command(text: str, root: tk.Tk) -> None:
             spoken = items_to_spoken_summary(items, label)
             root.after(0, show_news_popup, root, items, f"{label} Headlines")
             root.after(0, speak, spoken)
-            return
+            return spoken
 
         if action == "get_stock_movers":
             log.info("Running stock analysis …")
@@ -133,7 +137,7 @@ def handle_command(text: str, root: tk.Tk) -> None:
             analysis = get_stock_analysis()
             log.info("Stock analysis complete (%d chars)", len(analysis))
             root.after(0, speak, analysis)
-            return
+            return analysis
 
     # ── Step 4: Execute (OS actions) ────────────────────────────────────────────────────
     if action_dict and action_dict.get("action") is not None:
@@ -166,12 +170,14 @@ def handle_command(text: str, root: tk.Tk) -> None:
             confirmation = result_msg
 
         root.after(0, speak, confirmation)
+        return confirmation
     else:
         # ── Step 5: Conversational Q&A fallback (Siri / Alexa style) ────────
         log.info("No action matched — falling back to answer_question() …")
         answer = answer_question(text)
         log.info("answer_question replied: %r", answer[:80])
         root.after(0, speak, answer)
+        return answer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -421,6 +427,16 @@ def main() -> None:
         daemon=True,
     )
     tray_thread.start()
+
+    # ── Thread 3: Mobile Remote Web Server (Flask) ───────────────────────────
+    mobile_thread = threading.Thread(
+        target=start_mobile_server,
+        args=(root, handle_command),
+        name="MobileServer",
+        daemon=True,
+    )
+    mobile_thread.start()
+    log.info("Mobile Remote server thread dispatched (port 5000).")
 
     log.info("Tkinter main loop starting.")
 

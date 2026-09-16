@@ -13,3 +13,4 @@ keyboard
 feedparser
 requests
 yfinance
+flask
