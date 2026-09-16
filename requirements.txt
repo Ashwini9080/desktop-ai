@@ -1,0 +1,15 @@
+groq
+google-genai
+faster-whisper
+sounddevice
+pyaudio
+edge-tts
+playsound==1.2.2
+google-generativeai
+python-dotenv
+pystray
+pillow
+keyboard
+feedparser
+requests
+yfinance

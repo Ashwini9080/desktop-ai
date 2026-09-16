@@ -1,0 +1,26 @@
+# Environment files
+.env
+config/.env
+*.env
+
+# Python cache & bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# System / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.codesight/
+
+# Runtime logs (keep folder, ignore log files)
+logs/*.log
