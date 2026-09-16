@@ -6,6 +6,7 @@ opening File Explorer, and searching YouTube / Google.
 
 import json
 import os
+import shlex
 import subprocess
 import webbrowser
 from pathlib import Path
@@ -30,7 +31,7 @@ def _send_media_key(vk_code: int) -> None:
     try:
         ctypes.windll.user32.keybd_event(vk_code, 0, KEYEVENTF_EXTENDEDKEY, 0)
         ctypes.windll.user32.keybd_event(vk_code, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0)
-    except Exception as e:
+    except Exception:
         pass
 
 
@@ -63,8 +64,41 @@ def spotify_search(query: str) -> str:
         return f"Error opening Spotify search: {e}"
 
 
+def _parse_app_command(cmd_str: str) -> list[str]:
+    """Safely parse an application path and arguments for Windows without invoking a shell."""
+    cmd_str = os.path.expandvars(cmd_str).strip()
+    if not cmd_str:
+        return []
+
+    # Handle quoted executable path, e.g. "%ProgramFiles%\..." --arg
+    if cmd_str.startswith(('"', "'")):
+        quote = cmd_str[0]
+        end_quote = cmd_str.find(quote, 1)
+        if end_quote != -1:
+            exe = cmd_str[1:end_quote]
+            rest = cmd_str[end_quote + 1:].strip()
+            args = shlex.split(rest, posix=False) if rest else []
+            # Normalize flag arguments like --key="val" to --key=val so list2cmdline doesn't escape quotes
+            normalized_args = []
+            for arg in args:
+                if arg.startswith(("-", "/")) and "=" in arg:
+                    k, v = arg.split("=", 1)
+                    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                        v = v[1:-1]
+                    normalized_args.append(f"{k}={v}")
+                else:
+                    normalized_args.append(arg)
+            return [exe] + normalized_args
+
+    # If unquoted string exists directly as a file on disk
+    if os.path.exists(cmd_str):
+        return [cmd_str]
+
+    return shlex.split(cmd_str, posix=False)
+
+
 def launch_app(name: str) -> str:
-    """Load config/apps.json, look up the exe path for name, and open it.
+    """Load config/apps.json, look up the exe path for name, and open it safely without a shell.
 
     If the app name isn't found in the JSON or path is invalid, returns an error message.
     """
@@ -92,13 +126,12 @@ def launch_app(name: str) -> str:
     if not exe_path:
         return f"Error: Executable path for '{name}' is empty in {config_path.name}."
 
-    exe_path = os.path.expandvars(exe_path)
+    cmd_args = _parse_app_command(exe_path)
+    if not cmd_args:
+        return f"Error: Failed to parse executable command for '{name}'."
 
     try:
-        if "--" in exe_path or "/" in exe_path or " " in exe_path:
-            subprocess.Popen(exe_path, shell=True)
-        else:
-            os.startfile(exe_path)
+        subprocess.Popen(cmd_args, shell=False)
         return f"Successfully launched '{name}'."
     except Exception as e:
         return f"Error launching '{name}' with path '{exe_path}': {e}"

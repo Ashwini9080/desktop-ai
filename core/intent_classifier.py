@@ -128,24 +128,24 @@ def classify(text: str) -> dict[str, Any] | None:
         if re.search(rf"^(?:open\s+)?{site}(?:\s+{_OPEN_VERB})?$", norm):
             return {"action": "open_url", "target": url}
 
+    # --- News: outlet-specific (check before category to avoid broad matches) ---
+    for outlet in _NEWS_OUTLETS:
+        if re.search(rf"\b(?:show\s+)?{re.escape(outlet)}(?:\s+ki)?\s+(?:news|khabar|headlines)\b", norm) or norm == f"{outlet} news":
+            return {"action": "get_outlet_news", "target": outlet}
+
     # --- News: category ---
     news_rules: list[tuple[str, str]] = [
-        (r"\b(ai\s+(news|khabar)|ai\s+mein\s+kya\s+naya)\b",                       "ai"),
-        (r"\b(news\s+batao|aaj\s+ki\s+khabar|headlines\s+batao|khabar\s+batao)\b", "general"),
-        (r"\b(india\s+ki\s+news|national\s+news\s+batao|desh\s+ki\s+khabar)\b",    "national"),
-        (r"\b(international\s+news|duniya\s+ki\s+khabar|world\s+news\s+batao)\b",  "international"),
+        (r"\b(ai\s+(?:news|khabar)|ai\s+mein\s+kya\s+naya)\b",                       "ai"),
+        (r"\b(india\s+(?:ki\s+)?news|national\s+news|desh\s+ki\s+khabar)\b",         "national"),
+        (r"\b(international\s+news|world\s+news|duniya\s+ki\s+khabar)\b",             "international"),
         (r"\b(business\s+news|market\s+ki\s+khabar)\b",                             "business"),
         (r"\b(sports\s+news|khel\s+ki\s+khabar)\b",                                "sports"),
         (r"\b(tech\s+news|technology\s+ki\s+khabar)\b",                             "tech"),
+        (r"\b(?:(?:show|latest|today|aaj\s+ki)\s+)?(?:news|khabar|headlines)(?:\s+(?:batao|dikhao|sunao))?\b", "general"),
     ]
     for pattern, category in news_rules:
         if re.search(pattern, norm):
             return {"action": "get_news", "target": category}
-
-    # --- News: outlet-specific ---
-    for outlet in _NEWS_OUTLETS:
-        if re.search(rf"\b{re.escape(outlet)}\s+ki\s+(news|khabar|headlines)\b", norm):
-            return {"action": "get_outlet_news", "target": outlet}
 
     # --- Stock market ---
     if re.search(

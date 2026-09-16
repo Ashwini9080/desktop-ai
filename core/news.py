@@ -36,6 +36,13 @@ _OUTLET_DOMAINS: dict[str, str] = {
 }
 
 
+_DIRECT_OUTLET_FEEDS: dict[str, str] = {
+    "bbc":             "http://feeds.bbci.co.uk/news/rss.xml",
+    "ndtv":            "https://feeds.feedburner.com/ndtvnews-top-stories",
+    "times of india": "https://timesofindia.indiatimes.com/rssfeedstopstories.cms",
+}
+
+
 def _source_name(entry: Any) -> str:
     try:
         return entry.source.title
@@ -49,25 +56,43 @@ def _source_name(entry: Any) -> str:
 
 
 def _extract_image(entry: Any) -> str | None:
-    """Try media_thumbnail → media_content → <img> in summary."""
+    """Try media_thumbnail → media_content → enclosures → storyimage → <img> in summary."""
     try:
         thumbs = entry.get("media_thumbnail") or entry.get("media_thumbnails", [])
-        if thumbs:
-            return thumbs[0].get("url") or None
-    except (AttributeError, TypeError):
+        if thumbs and isinstance(thumbs, list):
+            url = thumbs[0].get("url")
+            if url:
+                return url
+    except Exception:
         pass
     try:
         media = entry.get("media_content", [])
-        if media:
-            return media[0].get("url") or None
-    except (AttributeError, TypeError):
+        if media and isinstance(media, list):
+            url = media[0].get("url")
+            if url:
+                return url
+    except Exception:
+        pass
+    try:
+        enclosures = entry.get("enclosures", [])
+        for enc in enclosures:
+            url = enc.get("href") or enc.get("url")
+            if url:
+                return url
+    except Exception:
+        pass
+    try:
+        storyimg = entry.get("storyimage")
+        if storyimg and isinstance(storyimg, str):
+            return storyimg
+    except Exception:
         pass
     try:
         match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']',
                           entry.get("summary", ""), re.I)
         if match:
             return match.group(1)
-    except (AttributeError, TypeError):
+    except Exception:
         pass
     return None
 
@@ -108,7 +133,7 @@ def get_news(category: str = "general") -> list[dict]:
 
 
 def get_outlet_news(outlet: str) -> list[dict]:
-    """Return top 3 headlines from a specific outlet.
+    """Return top 3 headlines from a specific outlet with image thumbnails.
 
     Each item: {"headline": str, "source": str, "image_url": str | None}
     Returns a single-item error list on failure or unknown outlet.
@@ -123,6 +148,18 @@ def get_outlet_news(outlet: str) -> list[dict]:
 
     if domain is None:
         return _err(f"No source configured for '{outlet}'. Try BBC, NDTV, or Times of India.")
+
+    # Try direct outlet feed first for rich images
+    direct_url = _DIRECT_OUTLET_FEEDS.get(key)
+    if direct_url:
+        try:
+            feed = feedparser.parse(direct_url)
+            items = _parse_entries(feed.entries, 3)
+            if items:
+                log.info("Fetched direct outlet news for [%s] (%d items)", key, len(items))
+                return items
+        except Exception as exc:
+            log.warning("Direct feed failed for %s (%s), falling back to Google News", key, exc)
 
     url = f"https://news.google.com/rss/search?q=site:{domain}+when:1d&hl=en-IN&gl=IN&ceid=IN:en"
     log.info("Fetching outlet news [%s → %s]", key, domain)
