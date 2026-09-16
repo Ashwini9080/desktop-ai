@@ -152,6 +152,16 @@ def handle_command(text: str, root: tk.Tk) -> None:
             confirmation = f"Searching YouTube for {target}."
         elif action == "search_google":
             confirmation = f"Searching Google for {target}."
+        elif action == "spotify_play_pause":
+            confirmation = "Spotify playback toggled."
+        elif action == "spotify_next":
+            confirmation = "Playing next song on Spotify."
+        elif action == "spotify_prev":
+            confirmation = "Playing previous song on Spotify."
+        elif action == "spotify_search":
+            confirmation = f"Searching and playing {target} on Spotify."
+        elif action == "blocked_privacy":
+            confirmation = "Privacy Protection active. Your Gmail and Personal Mail will not be touched."
         else:
             confirmation = result_msg
 
@@ -186,8 +196,8 @@ def _start_hotkey_listener(root: tk.Tk) -> None:
             log.warning("No speech captured after F9.")
             root.after(0, speak, "I did not catch that. Please try again.")
 
-    keyboard.add_hotkey("f9", _on_hotkey)
-    log.info("F9 hotkey registered.")
+    keyboard.add_hotkey("ctrl+shift+a", _on_hotkey)
+    log.info("Ctrl+Shift+A hotkey registered.")
     keyboard.wait()  # blocks — runs in its own thread
 
 
@@ -206,10 +216,10 @@ class InputBar:
       - Enter key submits; Escape clears the field
     """
 
-    WIDTH  = 420
-    HEIGHT = 44
+    WIDTH  = 500
+    HEIGHT = 56
     BG     = "#1e1b2e"       # dark purple-black
-    ACCENT = "#7c3aed"       # violet
+    ACCENT = "#a855f7"       # bright violet (more visible)
     FG     = "#e2e0ff"       # near-white text
     PLACEHOLDER = "Type a command and press Enter…"
 
@@ -236,7 +246,7 @@ class InputBar:
         root.geometry(f"{self.WIDTH}x{self.HEIGHT}+{x}+{y}")
 
         # ── Outer frame (acts as border / accent strip) ──────────────────────
-        outer = tk.Frame(root, bg=self.ACCENT, padx=2, pady=2)
+        outer = tk.Frame(root, bg=self.ACCENT, padx=3, pady=3)
         outer.pack(fill="both", expand=True)
 
         inner = tk.Frame(outer, bg=self.BG)

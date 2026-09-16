@@ -1,7 +1,9 @@
 {
   "antigravity": "",
-  "chrome": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "notepad": "C:\\Windows\\System32\\notepad.exe",
+  "chrome": "\"%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe\" --profile-directory=\"Default\"",
+  "notepad": "%SystemRoot%\\System32\\notepad.exe",
   "calculator": "calc.exe",
-  "vscode": "code"
+  "vscode": "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe",
+  "vs code": "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe",
+  "spotify": "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\Spotify.exe"
 }

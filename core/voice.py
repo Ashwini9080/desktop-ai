@@ -47,14 +47,12 @@ _TTS_VOICE = "en-GB-ThomasNeural"
 # STT
 # ---------------------------------------------------------------------------
 
-def listen_once() -> str:
-    """Block until F9 is held, record audio, release to stop, then transcribe.
+def listen_once(duration: float = 4.5) -> str:
+    """Record audio for `duration` seconds directly without hanging on keys, then transcribe.
 
     Returns transcribed text, or empty string if nothing was captured.
     """
-    log.info("Waiting for %s — hold to record …", HOTKEY)
-    keyboard.wait(HOTKEY)
-    log.info("Recording …")
+    log.info("Recording audio for %.1f seconds … speak now!", duration)
 
     frames: list[np.ndarray] = []
 
@@ -63,10 +61,13 @@ def listen_once() -> str:
             log.warning("Audio status: %s", status)
         frames.append(indata.copy())
 
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
-                        dtype=DTYPE, callback=_callback):
-        while keyboard.is_pressed(HOTKEY):
-            time.sleep(0.01)
+    try:
+        with sd.InputStream(samplerate=SAMPLE_RATE, channels=CHANNELS,
+                            dtype=DTYPE, callback=_callback):
+            sd.sleep(int(duration * 1000))
+    except Exception as exc:
+        log.error("Microphone recording error: %s", exc)
+        return ""
 
     log.info("Recording stopped.")
     if not frames:

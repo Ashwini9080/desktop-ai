@@ -7,8 +7,8 @@ Uses the new ``google-genai`` SDK (google.genai), which replaced the deprecated
 ``google-generativeai`` (google.generativeai) package.
 
 Fallback chain:
-    1. Gemini (gemini-2.0-flash)  — primary
-    2. Groq   (llama-3.3-70b)     — if Gemini hits 429 rate-limit or any error
+    1. Gemini (gemini-3.6-flash)  — primary
+    2. Groq   (llama-4-scout)      — if Gemini hits 429 rate-limit or any error
 
 All print() calls replaced with file logging (core.logger).
 """
@@ -40,7 +40,7 @@ load_dotenv(dotenv_path=_ENV_PATH)
 class GeminiAssistant:
     """Handles general conversational queries and complex agent tasks via Gemini."""
 
-    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-2.0-flash"):
+    def __init__(self, api_key: Optional[str] = None, model_name: str = "gemini-3.6-flash"):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model_name = model_name
         self._client: Optional[genai.Client] = None
@@ -79,21 +79,20 @@ Respond with EXACTLY this JSON format, no extra text, no markdown, no explanatio
 {"action": "<action>", "target": "<target>"}
 
 Allowed values for "action":
-  - "launch_app"  -> open a desktop application (e.g. Chrome, Notepad, VS Code)
-  - "open_url"    -> open a website in the browser (use a full https:// URL as target)
-  - "open_folder" -> open a folder in the file explorer
+  - "launch_app"    -> open a desktop application (e.g. Chrome, Notepad, VS Code)
+  - "open_url"      -> open a website in the browser (use a full https:// URL as target)
+  - "open_folder"   -> open a folder in the file explorer
+  - "search_google"  -> search Google for target query
+  - "search_youtube" -> search YouTube for target query
+  - null            -> for general questions, facts, news, chat, or information queries
 
 Rules:
-  - "target" must be a non-empty string.
-  - For "open_url", always use the full URL (https://...).
-  - For "open_folder", use a recognisable folder name (e.g. "downloads", "desktop").
-  - For "launch_app", use the common app name (e.g. "chrome", "notepad", "spotify").
-  - If the command is ambiguous or cannot be mapped to one of the three actions, \
-default to the closest reasonable guess rather than failing.
+  - If the user is asking a question or seeking information (e.g. "who is richest person", "what is AI", "tell me news"), return {"action": null, "target": null}.
+  - "target" must be a non-empty string when action is not null.
   - NEVER include any text outside the JSON object.
 """
 
-_ALLOWED_ACTIONS = {"launch_app", "open_url", "open_folder"}
+_ALLOWED_ACTIONS = {"launch_app", "open_url", "open_folder", "search_google", "search_youtube"}
 
 _NULL_RESULT: dict = {"action": None, "target": None}
 
@@ -107,7 +106,7 @@ def _strip_code_fence(text: str) -> str:
 
 
 def _parse_and_validate(raw: str) -> dict:
-    """Strip fences, parse JSON, validate action+target. Returns _NULL_RESULT on failure."""
+    """Strip fences, parse JSON, validate action+target. Returns _NULL_RESULT on failure or null action."""
     cleaned = _strip_code_fence(raw)
     try:
         parsed = json.loads(cleaned)
@@ -117,6 +116,9 @@ def _parse_and_validate(raw: str) -> dict:
 
     action = parsed.get("action")
     target = parsed.get("target")
+
+    if action is None or action == "null":
+        return _NULL_RESULT
 
     if action not in _ALLOWED_ACTIONS:
         log.warning("Invalid action: %r", action)
@@ -134,7 +136,7 @@ def _parse_and_validate(raw: str) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _resolve_with_groq(text: str) -> dict:
-    """Fallback: use Groq API (llama-3.3-70b) to resolve the command.
+    """Fallback: use Groq API (qwen/qwen3.8-27b) to resolve the command.
 
     Called automatically when Gemini fails (rate-limit or any error).
     Returns parsed action dict or _NULL_RESULT.
@@ -150,17 +152,17 @@ def _resolve_with_groq(text: str) -> dict:
         log.error("Groq fallback skipped — 'groq' package not installed.")
         return _NULL_RESULT
 
-    log.info("Gemini limit reached → switching to Groq fallback …")
+    log.info("Resolving intent with Groq …")
     try:
         client = Groq(api_key=groq_key)
         chat = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="qwen/qwen3.8-27b",
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user",   "content": text},
             ],
             temperature=0.0,
-            max_tokens=256,
+            max_tokens=128,
         )
         raw = chat.choices[0].message.content or ""
         return _parse_and_validate(raw)
@@ -176,9 +178,9 @@ def _resolve_with_groq(text: str) -> dict:
 def resolve_with_gemini(text: str) -> dict:
     """Resolve a natural-language command into a structured action dict.
 
-    Tries Gemini (gemini-2.0-flash) first.
+    Tries Gemini (gemini-3.6-flash) first.
     If Gemini hits a rate-limit (429) or any other error, automatically
-    falls back to Groq (llama-3.3-70b-versatile).
+    falls back to Groq (llama-4-scout-17b-16e-instruct).
 
     Returns::
 
@@ -198,10 +200,11 @@ def resolve_with_gemini(text: str) -> dict:
     client = genai.Client(api_key=api_key)
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.6-flash",
             contents=text,
             config=types.GenerateContentConfig(
                 system_instruction=_SYSTEM_PROMPT,
+                response_mime_type="application/json",
                 temperature=0.0,
                 max_output_tokens=256,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
@@ -215,8 +218,7 @@ def resolve_with_gemini(text: str) -> dict:
             log.info("Gemini answered: %s", result)
             return result
 
-        # Parse failed but API worked — still try Groq
-        log.warning("Gemini returned invalid JSON → trying Groq fallback …")
+        # Parse failed or was null — still try Groq
         return _resolve_with_groq(text)
 
     except Exception as exc:
@@ -243,8 +245,8 @@ Do NOT return JSON. Give a natural, spoken answer — friendly and concise.\
 def answer_question(question: str) -> str:
     """Answer a general question conversationally (Siri/Alexa style).
 
-    Tries Gemini (gemini-2.0-flash) first; falls back to Groq
-    (llama-3.3-70b-versatile) if Gemini is unavailable.
+    Tries Groq (qwen/qwen3.8-27b) first for instant 0.5s response;
+    falls back to Gemini (gemini-3.6-flash) if Groq is unavailable.
 
     Args:
         question: The user's natural-language question (any language).
@@ -252,14 +254,36 @@ def answer_question(question: str) -> str:
     Returns:
         A short, spoken plain-text answer in Hinglish.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    # ── Try Groq first (ultra-fast: ~0.5s) ───────────────────────────────────
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        try:
+            from groq import Groq  # lazy import
 
-    # ── Try Gemini ────────────────────────────────────────────────────────────
+            client_g = Groq(api_key=groq_key)
+            chat = client_g.chat.completions.create(
+                model="qwen/qwen3.8-27b",
+                messages=[
+                    {"role": "system", "content": _QA_SYSTEM_PROMPT},
+                    {"role": "user", "content": question},
+                ],
+                temperature=0.7,
+                max_tokens=256,
+            )
+            answer = (chat.choices[0].message.content or "").strip()
+            if answer:
+                log.info("answer_question → Groq replied (%d chars)", len(answer))
+                return answer
+        except Exception as exc:
+            log.warning("answer_question Groq error: %s → falling back to Gemini …", exc)
+
+    # ── Fallback to Gemini ────────────────────────────────────────────────────
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if api_key:
         try:
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-3.6-flash",
                 contents=question,
                 config=types.GenerateContentConfig(
                     system_instruction=_QA_SYSTEM_PROMPT,
@@ -275,30 +299,7 @@ def answer_question(question: str) -> str:
                 log.info("answer_question → Gemini replied (%d chars)", len(answer))
                 return answer
         except Exception as exc:
-            log.warning("answer_question Gemini error: %s → trying Groq …", exc)
-
-    # ── Groq fallback ─────────────────────────────────────────────────────────
-    groq_key = os.getenv("GROQ_API_KEY", "").strip()
-    if groq_key:
-        try:
-            from groq import Groq  # lazy import
-
-            client_g = Groq(api_key=groq_key)
-            chat = client_g.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": _QA_SYSTEM_PROMPT},
-                    {"role": "user", "content": question},
-                ],
-                temperature=0.7,
-                max_tokens=256,
-            )
-            answer = (chat.choices[0].message.content or "").strip()
-            if answer:
-                log.info("answer_question → Groq replied (%d chars)", len(answer))
-                return answer
-        except Exception as exc:
-            log.error("answer_question Groq error: %s", exc)
+            log.error("answer_question Gemini error: %s", exc)
 
     return "Maafi chahta hoon, abhi yeh jawab nahi de sakta. Thodi der mein dobara try karein."
 

@@ -51,13 +51,51 @@ def classify(text: str) -> dict[str, Any] | None:
     if not norm:
         return None
 
+    # --- Privacy protection: Block Gmail and Mail access ---
+    if re.search(r"\b(gmail|email|e-mail|my\s+mail|inbox)\b", norm):
+        return {"action": "blocked_privacy", "target": "gmail"}
+
     # --- App launches ---
     if re.search(rf"\b(open\s+antigravity|antigravity\s+({_OPEN_VERB}))\b", norm) \
             or norm == "antigravity":
         return {"action": "launch_app", "target": "antigravity"}
 
+    if re.search(rf"\b(open\s+(?:vscode|vs\s*code|visual\s*studio\s*code)|(?:vscode|vs\s*code)\s+{_OPEN_VERB})\b", norm) \
+            or norm in {"vscode", "vs code"}:
+        return {"action": "launch_app", "target": "vscode"}
+
+    if re.search(rf"\b(open\s+spotify|spotify\s+{_OPEN_VERB})\b", norm) \
+            or norm == "spotify":
+        return {"action": "launch_app", "target": "spotify"}
+
     if re.search(rf"\b(open\s+(chrome|browser)|(chrome|browser)\s+{_OPEN_VERB})\b", norm):
         return {"action": "launch_app", "target": "chrome"}
+
+    # --- Spotify Play/Pause and Media Controls ---
+    if re.search(r"\b(pause\s+(?:spotify|music|song|gaana)|spotify\s+(?:pause|rok\s*do|roko)|gaana\s+rok(?:o|do)?|music\s+rok(?:o|do)?)\b", norm):
+        return {"action": "spotify_play_pause", "target": "pause"}
+
+    if re.search(r"\b(play\s+(?:spotify|music)|resume\s+(?:spotify|music)|spotify\s+(?:play|chalao|bajao)|gaana\s+chalao|music\s+chalao)\b", norm):
+        return {"action": "spotify_play_pause", "target": "play"}
+
+    if re.search(r"\b(next\s+(?:song|track)|agla\s+gaana|gaana\s+badlo|skip\s+song)\b", norm):
+        return {"action": "spotify_next", "target": None}
+
+    if re.search(r"\b(previous\s+(?:song|track)|pichhla\s+gaana|prev\s+song)\b", norm):
+        return {"action": "spotify_prev", "target": None}
+
+    m = re.search(
+        r"(?:"
+        r"spotify\s+pe\s+(.+?)\s+(?:chalao|bajao|play\s+karo|play|search\s+karo)"
+        r"|play\s+(.+?)\s+on\s+spotify"
+        r"|search\s+(.+?)\s+on\s+spotify"
+        r")",
+        norm,
+    )
+    if m:
+        query = next(g for g in m.groups() if g is not None).strip()
+        if query:
+            return {"action": "spotify_search", "target": query}
 
     # --- Folder / Explorer ---
     if re.search(
@@ -122,7 +160,8 @@ def classify(text: str) -> dict[str, Any] | None:
     # --- YouTube search / play ---
     m = re.search(
         r"(?:"
-        r"youtube\s+pe\s+(.+?)\s+(?:khojo|bajao|chalao|play\s+karo)"
+        r"(?:open\s+)?youtube\s+(?:and\s+)?(?:search|play)\s+(?:for\s+)?(?:song\s+)?(.+)"
+        r"|youtube\s+pe\s+(.+?)\s+(?:khojo|bajao|chalao|play\s+karo)"
         r"|play\s+(.+?)\s+on\s+youtube"
         r"|(.+?)\s+gaana?\s+(?:bajao|chalao|sunao)"
         r"|youtube\s+pe\s+(.+?)\s+search\s+karo"
@@ -138,7 +177,8 @@ def classify(text: str) -> dict[str, Any] | None:
     # --- Google search ---
     m = re.search(
         r"(?:"
-        r"google\s+pe\s+(.+?)\s+(?:search\s+karo|dhundo|khojo)"
+        r"(?:open\s+)?google\s+(?:and\s+)?search\s+(?:for\s+)?(.+)"
+        r"|google\s+pe\s+(.+?)\s+(?:search\s+karo|dhundo|khojo)"
         r"|(.+?)\s+google\s+karo"
         r"|^search\s+(?:for\s+)?(.+?)(?:\s+on\s+google)?$"
         r"|google\s+karo\s+(.+)"
