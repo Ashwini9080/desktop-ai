@@ -63,7 +63,9 @@ class _NewsPopup:
         w.attributes("-topmost", True)
         w.configure(bg=_BG)
         sw = w.winfo_screenwidth()
-        w.geometry(f"{_POPUP_W}+{sw - _POPUP_W - 20}+60")
+        x = sw - _POPUP_W - 20
+        y = 60
+        w.geometry(f"+{x}+{y}")
 
         # Title bar
         bar = tk.Frame(w, bg=_ACCENT, pady=4)
