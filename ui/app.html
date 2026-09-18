@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Desktop AI — Minimal Luxury</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Inter:wght@200;300;400;500&display=swap"
+    rel="stylesheet"
+  />
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    :root {
+      --bg: #0b0b0a;
+      --panel: #131211;
+      --gold: #c9a961;
+      --gold-muted: rgba(201, 169, 97, 0.3);
+      --gold-faint: rgba(201, 169, 97, 0.12);
+      --text-main: #f5f2eb;
+      --text-muted: rgba(245, 242, 235, 0.45);
+      --font-serif: "Cormorant Garamond", Georgia, serif;
+      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-app-region: drag;
+    }
+
+    .luxury-panel {
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at 50% 0%, #1a1816 0%, var(--panel) 75%);
+      border: 1px solid var(--gold-muted);
+      border-radius: 20px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8), 0 0 1px rgba(201, 169, 97, 0.25) inset;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 24px 22px 18px 22px;
+      position: relative;
+    }
+
+    /* Window Top Header & Drag */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .greeting-block {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .eyebrow {
+      font-size: 10px;
+      font-weight: 200;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--gold);
+      opacity: 0.9;
+    }
+
+    .client-name {
+      font-family: var(--font-serif);
+      font-size: 34px;
+      font-weight: 300;
+      letter-spacing: 0.5px;
+      color: var(--text-main);
+      line-height: 1.1;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      -webkit-app-region: no-drag;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      border-radius: 20px;
+      background: rgba(201, 169, 97, 0.06);
+      border: 1px solid var(--gold-faint);
+    }
+
+    .status-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 6px var(--gold);
+      transition: background 0.3s ease;
+    }
+
+    .status-text {
+      font-size: 9px;
+      font-weight: 300;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    .close-btn {
+      cursor: pointer;
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      border: 1px solid var(--gold-faint);
+      color: var(--text-muted);
+      font-size: 11px;
+      transition: all 0.2s ease;
+      background: transparent;
+    }
+
+    .close-btn:hover {
+      color: var(--gold);
+      border-color: var(--gold);
+      background: rgba(201, 169, 97, 0.1);
+    }
+
+    /* Center Mic Stage */
+    .center-stage {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 22px;
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+
+    .mic-ring-wrap {
+      position: relative;
+      width: 84px;
+      height: 84px;
+      border-radius: 50%;
+      border: 1px solid var(--gold-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: rgba(11, 11, 10, 0.6);
+      transition: border-color 0.4s ease, box-shadow 0.4s ease, transform 0.2s ease;
+      -webkit-app-region: no-drag;
+    }
+
+    .mic-ring-wrap:hover {
+      border-color: var(--gold);
+      transform: scale(1.02);
+    }
+
+    .mic-ring-wrap:active {
+      transform: scale(0.98);
+    }
+
+    /* Orbiting dot */
+    .orbit-track {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      pointer-events: none;
+      animation: orbit 6s linear infinite;
+    }
+
+    .orbit-dot {
+      position: absolute;
+      top: -2.5px;
+      left: calc(50% - 2.5px);
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 6px var(--gold);
+    }
+
+    @keyframes orbit {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    /* Mic symbol / dot inside */
+    .mic-icon {
+      width: 22px;
+      height: 22px;
+      fill: none;
+      stroke: var(--gold);
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: 0.85;
+      transition: opacity 0.3s ease, stroke 0.3s ease;
+    }
+
+    /* Active Listening state */
+    .mic-ring-wrap.active {
+      border-color: var(--gold);
+      box-shadow: 0 0 24px rgba(201, 169, 97, 0.35), 0 0 6px var(--gold) inset;
+    }
+
+    .mic-ring-wrap.active .orbit-track {
+      animation-duration: 2s;
+    }
+
+    .mic-ring-wrap.active .mic-icon {
+      opacity: 1;
+      stroke: #fff;
+    }
+
+    /* Underline Command Input */
+    .input-wrap {
+      width: 100%;
+      max-width: 300px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      -webkit-app-region: no-drag;
+    }
+
+    .command-input {
+      width: 100%;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid var(--gold-muted);
+      font-family: var(--font-sans);
+      font-size: 13.5px;
+      font-weight: 300;
+      color: var(--text-main);
+      text-align: center;
+      padding: 8px 12px;
+      outline: none;
+      transition: border-color 0.3s ease;
+    }
+
+    .command-input::placeholder {
+      color: var(--text-muted);
+      font-weight: 200;
+      letter-spacing: 0.4px;
+    }
+
+    .command-input:focus {
+      border-bottom-color: var(--gold);
+    }
+
+    /* Subtle live feedback / response */
+    .feedback-text {
+      min-height: 20px;
+      font-family: var(--font-serif);
+      font-size: 14px;
+      font-style: italic;
+      color: var(--gold);
+      text-align: center;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      max-width: 320px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 6px;
+    }
+
+    .feedback-text.visible {
+      opacity: 0.95;
+    }
+
+    /* Bottom 3-Column Shortcuts */
+    .shortcuts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      border-top: 1px solid var(--gold-faint);
+      padding-top: 12px;
+      -webkit-app-region: no-drag;
+    }
+
+    .shortcut-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 2px 6px;
+      cursor: pointer;
+      transition: opacity 0.2s ease;
+    }
+
+    .shortcut-col:hover {
+      opacity: 0.85;
+    }
+
+    .shortcut-col:not(:last-child) {
+      border-right: 1px solid var(--gold-faint);
+    }
+
+    .col-label {
+      font-size: 9px;
+      font-weight: 300;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--gold);
+      opacity: 0.7;
+      margin-bottom: 3px;
+    }
+
+    .col-value {
+      font-family: var(--font-serif);
+      font-size: 13.5px;
+      font-weight: 400;
+      color: var(--text-main);
+      letter-spacing: 0.3px;
+    }
+  </style>
+</head>
+<body>
+  <div class="luxury-panel">
+    <!-- Header -->
+    <div class="header">
+      <div class="greeting-block">
+        <span class="eyebrow" id="eyebrowText">Good Evening</span>
+        <h1 class="client-name" id="userNameText">Ash.</h1>
+      </div>
+      <div class="header-actions">
+        <div class="status-badge" id="statusBadge">
+          <div class="status-dot" id="statusDot"></div>
+          <span class="status-text" id="statusText">STANDBY</span>
+        </div>
+        <button class="close-btn" id="hideBtn" title="Hide to Tray">✕</button>
+      </div>
+    </div>
+
+    <!-- Center Stage: Mic Ring -->
+    <div class="center-stage">
+      <div class="mic-ring-wrap" id="micRing" title="Click to speak (or press F9)">
+        <div class="orbit-track">
+          <div class="orbit-dot"></div>
+        </div>
+        <svg class="mic-icon" viewBox="0 0 24 24">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"></path>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+          <line x1="12" y1="19" x2="12" y2="22"></line>
+          <line x1="8" y1="22" x2="16" y2="22"></line>
+        </svg>
+      </div>
+
+      <!-- Underline Input -->
+      <div class="input-wrap">
+        <input
+          type="text"
+          class="command-input"
+          id="cmdInput"
+          placeholder="Or type a command"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="feedback-text" id="feedbackText">Ready and standing by.</div>
+      </div>
+    </div>
+
+    <!-- Bottom 3-Column Shortcuts -->
+    <div class="shortcuts-row">
+      <div class="shortcut-col" onclick="sendQuickCommand('open chrome')">
+        <span class="col-label">APP</span>
+        <span class="col-value">Chrome</span>
+      </div>
+      <div class="shortcut-col" onclick="sendQuickCommand('open downloads')">
+        <span class="col-label">FILES</span>
+        <span class="col-value">Downloads</span>
+      </div>
+      <div class="shortcut-col" onclick="sendQuickCommand('search youtube music')">
+        <span class="col-label">WEB</span>
+        <span class="col-value">YouTube</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const micRing = document.getElementById("micRing");
+    const cmdInput = document.getElementById("cmdInput");
+    const feedbackText = document.getElementById("feedbackText");
+    const statusText = document.getElementById("statusText");
+    const eyebrowText = document.getElementById("eyebrowText");
+    const userNameText = document.getElementById("userNameText");
+    const hideBtn = document.getElementById("hideBtn");
+
+    let isListening = false;
+
+    // Time-based default greeting computation
+    function computeGreeting() {
+      const hour = new Date().getHours();
+      let greeting = "Good Evening";
+      if (hour >= 5 && hour < 12) {
+        greeting = "Good Morning";
+      } else if (hour >= 12 && hour < 17) {
+        greeting = "Good Afternoon";
+      } else if (hour >= 17 && hour < 22) {
+        greeting = "Good Evening";
+      } else {
+        greeting = "Late Night";
+      }
+      eyebrowText.textContent = greeting;
+    }
+    computeGreeting();
+
+    // Toggle Mic Click Handler
+    micRing.addEventListener("click", () => {
+      if (window.pywebview && window.pywebview.api) {
+        setListening(true);
+        window.pywebview.api.toggle_mic();
+      } else {
+        // Mock fallback for browser preview
+        setListening(!isListening);
+      }
+    });
+
+    // Command Input Enter Handler
+    cmdInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const text = cmdInput.value.trim();
+        if (text) {
+          showFeedback("Processing: " + text);
+          setStatus("WORKING");
+          cmdInput.value = "";
+          if (window.pywebview && window.pywebview.api) {
+            window.pywebview.api.send_command(text);
+          }
+        }
+      }
+    });
+
+    // Quick Command Trigger
+    function sendQuickCommand(cmd) {
+      cmdInput.value = cmd;
+      showFeedback("Selected: " + cmd);
+      if (window.pywebview && window.pywebview.api) {
+        setStatus("WORKING");
+        window.pywebview.api.send_command(cmd);
+      }
+    }
+
+    // Hide window to system tray
+    hideBtn.addEventListener("click", () => {
+      if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.hide_window();
+      }
+    });
+
+    // Python -> JS API callable functions
+    function setListening(active) {
+      isListening = active;
+      if (active) {
+        micRing.classList.add("active");
+        setStatus("LISTENING");
+        showFeedback("Listening for command...");
+      } else {
+        micRing.classList.remove("active");
+        setStatus("STANDBY");
+      }
+    }
+
+    function setStatus(text) {
+      statusText.textContent = text;
+    }
+
+    function showFeedback(text) {
+      feedbackText.textContent = text;
+      feedbackText.classList.add("visible");
+      setTimeout(() => {
+        if (!isListening) {
+          feedbackText.classList.remove("visible");
+        }
+      }, 5000);
+    }
+
+    function updateGreeting(eyebrow, name) {
+      if (eyebrow) eyebrowText.textContent = eyebrow;
+      if (name) userNameText.textContent = name;
+    }
+
+    // When pywebview is ready
+    window.addEventListener("pywebviewready", () => {
+      if (window.pywebview && window.pywebview.api) {
+        window.pywebview.api.get_initial_data().then((data) => {
+          if (data) {
+            if (data.eyebrow) eyebrowText.textContent = data.eyebrow;
+            if (data.name) userNameText.textContent = data.name;
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>

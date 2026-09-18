@@ -23,4 +23,6 @@ Thumbs.db
 .codesight/
 
 # Runtime logs (keep folder, ignore log files)
+*.log
+performance.log
 logs/*.log

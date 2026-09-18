@@ -37,6 +37,9 @@ load_dotenv(dotenv_path=_ENV_PATH)
 # Original conversational assistant class (updated to new SDK, API preserved)
 # ─────────────────────────────────────────────────────────────────────────────
 
+_SLOW_INTERNET_MSG = "Thoda slow internet lag raha hai, dobara try karo"
+
+
 class GeminiAssistant:
     """Handles general conversational queries and complex agent tasks via Gemini."""
 
@@ -48,7 +51,10 @@ class GeminiAssistant:
     @property
     def client(self) -> Optional[genai.Client]:
         if self._client is None and self.api_key:
-            self._client = genai.Client(api_key=self.api_key)
+            self._client = genai.Client(
+                api_key=self.api_key,
+                http_options=types.HttpOptions(timeout=5000),
+            )
         return self._client
 
     def ask(self, prompt: str) -> str:
@@ -59,11 +65,17 @@ class GeminiAssistant:
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
+                config=types.GenerateContentConfig(
+                    http_options=types.HttpOptions(timeout=5000),
+                ),
             )
             return response.text
         except Exception as e:
+            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                return _SLOW_INTERNET_MSG
             log.error("Gemini ask() error: %s", e)
             return f"Error communicating with Gemini: {e}"
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +166,7 @@ def _resolve_with_groq(text: str) -> dict:
 
     log.info("Resolving intent with Groq …")
     try:
-        client = Groq(api_key=groq_key)
+        client = Groq(api_key=groq_key, timeout=5.0)
         chat = client.chat.completions.create(
             model="qwen/qwen3.8-27b",
             messages=[
@@ -163,10 +175,15 @@ def _resolve_with_groq(text: str) -> dict:
             ],
             temperature=0.0,
             max_tokens=128,
+            timeout=5.0,
         )
         raw = chat.choices[0].message.content or ""
         return _parse_and_validate(raw)
     except Exception as exc:
+        err_str = str(exc).lower()
+        if "timeout" in err_str or "timed out" in err_str:
+            log.warning("Groq intent resolution timed out after 5s: %s", exc)
+            return {"action": "timeout", "target": _SLOW_INTERNET_MSG}
         log.error("Groq error: %s", exc)
         return _NULL_RESULT
 
@@ -197,7 +214,7 @@ def resolve_with_gemini(text: str) -> dict:
         log.warning("GEMINI_API_KEY not set — skipping Gemini, trying Groq …")
         return _resolve_with_groq(text)
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=5000))
     try:
         response = client.models.generate_content(
             model="gemini-3.6-flash",
@@ -208,6 +225,7 @@ def resolve_with_gemini(text: str) -> dict:
                 temperature=0.0,
                 max_output_tokens=256,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                http_options=types.HttpOptions(timeout=5000),
             ),
         )
         raw = response.text
@@ -222,8 +240,14 @@ def resolve_with_gemini(text: str) -> dict:
         return _resolve_with_groq(text)
 
     except Exception as exc:
-        err_str = str(exc)
-        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+        err_str = str(exc).lower()
+        if "timeout" in err_str or "timed out" in err_str:
+            log.warning("Gemini timed out (5s) → switching to Groq …")
+            groq_res = _resolve_with_groq(text)
+            if groq_res.get("action") is not None:
+                return groq_res
+            return {"action": "timeout", "target": _SLOW_INTERNET_MSG}
+        if "429" in err_str or "resource_exhausted" in err_str:
             log.warning("Gemini rate-limited (429) → switching to Groq …")
         else:
             log.error("Gemini error: %s → trying Groq fallback …", exc)
@@ -254,13 +278,15 @@ def answer_question(question: str) -> str:
     Returns:
         A short, spoken plain-text answer in Hinglish.
     """
+    groq_timed_out = False
+
     # ── Try Groq first (ultra-fast: ~0.5s) ───────────────────────────────────
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
         try:
             from groq import Groq  # lazy import
 
-            client_g = Groq(api_key=groq_key)
+            client_g = Groq(api_key=groq_key, timeout=5.0)
             chat = client_g.chat.completions.create(
                 model="qwen/qwen3.8-27b",
                 messages=[
@@ -269,19 +295,25 @@ def answer_question(question: str) -> str:
                 ],
                 temperature=0.7,
                 max_tokens=256,
+                timeout=5.0,
             )
             answer = (chat.choices[0].message.content or "").strip()
             if answer:
                 log.info("answer_question → Groq replied (%d chars)", len(answer))
                 return answer
         except Exception as exc:
-            log.warning("answer_question Groq error: %s → falling back to Gemini …", exc)
+            err_str = str(exc).lower()
+            if "timeout" in err_str or "timed out" in err_str:
+                log.warning("answer_question Groq timed out (5s): %s", exc)
+                groq_timed_out = True
+            else:
+                log.warning("answer_question Groq error: %s → falling back to Gemini …", exc)
 
     # ── Fallback to Gemini ────────────────────────────────────────────────────
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if api_key:
         try:
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=5000))
             response = client.models.generate_content(
                 model="gemini-3.6-flash",
                 contents=question,
@@ -292,6 +324,7 @@ def answer_question(question: str) -> str:
                     automatic_function_calling=types.AutomaticFunctionCallingConfig(
                         disable=True
                     ),
+                    http_options=types.HttpOptions(timeout=5000),
                 ),
             )
             answer = (response.text or "").strip()
@@ -299,7 +332,15 @@ def answer_question(question: str) -> str:
                 log.info("answer_question → Gemini replied (%d chars)", len(answer))
                 return answer
         except Exception as exc:
+            err_str = str(exc).lower()
+            if "timeout" in err_str or "timed out" in err_str:
+                log.error("answer_question Gemini timed out (5s): %s", exc)
+                return _SLOW_INTERNET_MSG
             log.error("answer_question Gemini error: %s", exc)
 
+    if groq_timed_out:
+        return _SLOW_INTERNET_MSG
+
     return "Maafi chahta hoon, abhi yeh jawab nahi de sakta. Thodi der mein dobara try karein."
+
 

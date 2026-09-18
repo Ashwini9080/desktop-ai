@@ -238,6 +238,8 @@ def execute(action_dict: Dict[str, Any]) -> str:
         return spotify_search(target)
     elif action == "blocked_privacy":
         return "Privacy Protection: Gmail aur Personal Mail access restricted hai. Main aapke mail ko touch nahi karunga."
+    elif action in ("timeout", "speak", "message"):
+        return str(target)
     else:
         return (
             f"Error: Unknown action '{action}'."

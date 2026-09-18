@@ -1,92 +1,129 @@
-"""Desktop AI Assistant — Main Entry Point (no-console build).
+"""Desktop AI Assistant — Main Entry Point (Phase 11: Minimal Luxury GUI + Terminal Dual-Mode).
 
 Architecture:
-  ┌───────────────────────────────────────────────────────────────┐
-  │  Main thread        : Tkinter slim always-on-top input bar    │
-  │  Thread – hotkey    : keyboard.add_hotkey("f9", _on_hotkey)   │
-  │  Thread – tray      : pystray icon (Show/Hide + Quit)         │
-  │                                                               │
-  │  F9 held → listen_once() → handle_command(text)              │
-  │  Enter in bar       → handle_command(text)                    │
-  │  handle_command     → classify → Gemini fallback → execute   │
-  │                     → root.after(0, speak, msg)  ← main thd  │
-  └───────────────────────────────────────────────────────────────┘
-
-No print() or input() calls anywhere — all debug output goes to
-logs/desktop_ai.log via core.logger.
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │  Main thread        : pywebview window (ui/app.html, frameless,       │
+  │                       bottom-right, champagne gold luxury design)     │
+  │  Thread – terminal  : input('> ') loop if sys.stdin.isatty() is True  │
+  │  Thread – hotkey    : keyboard.add_hotkey("f9", _on_hotkey)            │
+  │  Thread – tray      : pystray icon (Show/Hide + Quit)                  │
+  │  Thread – mobile    : Flask web server for remote control (port 5000) │
+  │                                                                        │
+  │  GUI Input Enter    ──┐                                                │
+  │  GUI Mic Ring Click ──┼─→ handle_command(text)                         │
+  │  Terminal input('> ')─┤    ├── classify()                              │
+  │  F9 Voice Hotkey    ──┤    ├── resolve_with_gemini()                   │
+  │  Mobile Web Request ──┘    ├── execute() / answer_question()           │
+  │                            └── speak() + GUI feedback update           │
+  └────────────────────────────────────────────────────────────────────────┘
 """
 
 from __future__ import annotations
 
+import ctypes
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import shutil
 import sys
 import threading
-import tkinter as tk
-from pathlib import Path
+import time
+from typing import Optional
 
 from dotenv import load_dotenv
 
-# ── Load .env before any core imports ─────────────────────────────────────────
-_ENV_PATH = Path(__file__).parent / "config" / ".env"
+# ── Load .env before any core imports (auto-bootstrap from .env.example if missing) ─
+_CONFIG_DIR = Path(__file__).parent / "config"
+_ENV_PATH = _CONFIG_DIR / ".env"
+_ENV_EXAMPLE = _CONFIG_DIR / ".env.example"
+
+_BOOTSTRAPPED_ENV = False
+if not _ENV_PATH.exists() and _ENV_EXAMPLE.exists():
+    try:
+        shutil.copyfile(_ENV_EXAMPLE, _ENV_PATH)
+        _BOOTSTRAPPED_ENV = True
+    except Exception:
+        pass
+
 load_dotenv(dotenv_path=_ENV_PATH)
 
 # ── Core imports ───────────────────────────────────────────────────────────────
-from core.logger import get_logger
+from core.logger import get_logger, log_performance
 from core.voice import listen_once, speak
 from core.intent_classifier import classify
 from core.gemini_fallback import resolve_with_gemini, answer_question
 from core.executor import execute
 from core.greeting import get_greeting
 from core.news import get_news, get_outlet_news, items_to_spoken_summary
-from core.news_ui import show_news_popup
 from core.stocks import get_stock_analysis
-from core.mobile_server import start_mobile_server, get_local_ip
+from core.mobile_server import start_mobile_server
 
 import keyboard          # pip install keyboard
 import pystray           # pip install pystray
 from PIL import Image, ImageDraw    # pip install pillow
+import webview           # pip install pywebview
 
 log = get_logger(__name__)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tray icon helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _make_icon_image(size: int = 64) -> Image.Image:
-    """Return the tray icon image.
-
-    Uses an existing 'icon.png' in the project root if present,
-    otherwise generates a purple gradient square on-the-fly.
-    """
-    icon_file = Path(__file__).parent / "icon.png"
-    if icon_file.exists():
-        return Image.open(icon_file).resize((size, size))
-
-    # Draw a rounded purple square with a white 'AI' centre dot
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    # Background gradient approximated by a filled rounded rectangle
-    draw.rounded_rectangle([(2, 2), (size - 2, size - 2)], radius=12,
-                            fill=(90, 50, 160))
-    # Small white accent circle
-    cx, cy, r = size // 2, size // 2, size // 6
-    draw.ellipse([(cx - r, cy - r), (cx + r, cy + r)], fill=(255, 255, 255))
-    return img
+# Global pywebview window & tray icon references
+_window: Optional[webview.Window] = None
+_tray_icon: Optional[pystray.Icon] = None
+_is_gui_visible = True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Core command pipeline
+# UI Synchronization Helpers (Python -> JS)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def handle_command(text: str, root: tk.Tk) -> str:
+def _set_gui_listening(active: bool) -> None:
+    """Toggle listening animation in the GUI window."""
+    global _window
+    if _window:
+        try:
+            val = "true" if active else "false"
+            _window.evaluate_js(f"if (typeof setListening === 'function') setListening({val});")
+        except Exception as exc:
+            log.debug("evaluate_js setListening error: %s", exc)
+
+
+def _update_gui_feedback(text: str, status: str = "STANDBY") -> None:
+    """Update feedback text and status badge in the GUI window."""
+    global _window
+    if _window:
+        try:
+            safe_text = json.dumps(text)
+            safe_status = json.dumps(status)
+            _window.evaluate_js(
+                f"if (typeof showFeedback === 'function') showFeedback({safe_text}); "
+                f"if (typeof setStatus === 'function') setStatus({safe_status});"
+            )
+        except Exception as exc:
+            log.debug("evaluate_js showFeedback error: %s", exc)
+
+
+def _print_terminal_response(response: str) -> None:
+    """Print assistant output to terminal if launched interactively."""
+    if sys.stdin and sys.stdin.isatty():
+        print(f"\n[Desktop AI]: {response}\n> ", end="", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Core Command Pipeline (Single Entry Point for GUI, Voice, Terminal & Mobile)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _speak_bg(text: str) -> None:
+    """Speak asynchronously in background daemon thread without blocking command response."""
+    threading.Thread(target=speak, args=(text,), daemon=True).start()
+
+
+def handle_command(text: str) -> str:
     """Full pipeline: classify → Gemini fallback → execute → speak.
 
-    speak() is marshalled back to the Tk main thread via root.after()
-    because pyttsx3 is not thread-safe.
+    Single entry point for both input paths (GUI, mobile and terminal).
 
     Args:
         text: Raw user command string (voice or typed).
-        root: The Tk root window — used for root.after() marshalling.
 
     Returns:
         Spoken response or confirmation string.
@@ -96,9 +133,12 @@ def handle_command(text: str, root: tk.Tk) -> str:
         return ""
 
     log.info("Command received: %r", text)
+    _update_gui_feedback(f"Processing: {text}", status="WORKING")
 
-    # ── Step 1: Rule-based classifier (fast, no API call) ─────────────────────
+    # ── Step 1: Rule-based classifier (fast, zero latency) ───────────────────
+    t_class_start = time.time()
     action_dict = classify(text)
+    class_engine = "rule_based"
 
     if action_dict is not None:
         log.info("Classifier matched: %s", action_dict)
@@ -106,8 +146,14 @@ def handle_command(text: str, root: tk.Tk) -> str:
         # ── Step 2: AI fallback (Gemini → Groq) ──────────────────────────────
         log.info("No rule matched — asking AI (Gemini/Groq) …")
         action_dict = resolve_with_gemini(text)
+        class_engine = "ai_fallback"
 
-    # ── Step 3: News shortcut (bypasses execute — shows popup + speaks) ────────────
+    t_class = time.time() - t_class_start
+    log_performance("CLASSIFICATION", t_class, f"engine={class_engine} result={action_dict}")
+
+    t_exec_start = time.time()
+
+    # ── Step 3: News & Stocks shortcuts ──────────────────────────────────────
     if action_dict:
         action = action_dict.get("action")
         target = action_dict.get("target", "general")
@@ -117,9 +163,10 @@ def handle_command(text: str, root: tk.Tk) -> str:
             items = get_news(str(target))
             label = str(target).replace("_", " ").title()
             spoken = items_to_spoken_summary(items, label)
-            # Show popup on main thread, speak on current (daemon) thread
-            root.after(0, show_news_popup, root, items, f"{label} Headlines")
-            root.after(0, speak, spoken)
+            log_performance("EXECUTION", time.time() - t_exec_start, f"action=get_news target={target}")
+            _update_gui_feedback(spoken)
+            _speak_bg(spoken)
+            _print_terminal_response(spoken)
             return spoken
 
         if action == "get_outlet_news":
@@ -127,19 +174,25 @@ def handle_command(text: str, root: tk.Tk) -> str:
             items = get_outlet_news(str(target))
             label = str(target).title()
             spoken = items_to_spoken_summary(items, label)
-            root.after(0, show_news_popup, root, items, f"{label} Headlines")
-            root.after(0, speak, spoken)
+            log_performance("EXECUTION", time.time() - t_exec_start, f"action=get_outlet_news target={target}")
+            _update_gui_feedback(spoken)
+            _speak_bg(spoken)
+            _print_terminal_response(spoken)
             return spoken
 
         if action == "get_stock_movers":
             log.info("Running stock analysis …")
-            root.after(0, speak, "Analysing the market. Please wait, this may take a moment.")
+            _update_gui_feedback("Analysing the market …", status="WORKING")
+            _speak_bg("Analysing the market. Please wait, this may take a moment.")
             analysis = get_stock_analysis()
             log.info("Stock analysis complete (%d chars)", len(analysis))
-            root.after(0, speak, analysis)
+            log_performance("EXECUTION", time.time() - t_exec_start, "action=get_stock_movers")
+            _update_gui_feedback(analysis)
+            _speak_bg(analysis)
+            _print_terminal_response(analysis)
             return analysis
 
-    # ── Step 4: Execute (OS actions) ────────────────────────────────────────────────────
+    # ── Step 4: Execute OS Actions ───────────────────────────────────────────
     if action_dict and action_dict.get("action") is not None:
         result_msg = execute(action_dict)
         log.info("Execute result: %s", result_msg)
@@ -169,211 +222,217 @@ def handle_command(text: str, root: tk.Tk) -> str:
         else:
             confirmation = result_msg
 
-        root.after(0, speak, confirmation)
+        log_performance("EXECUTION", time.time() - t_exec_start, f"action={action} target={target}")
+        _update_gui_feedback(confirmation)
+        _speak_bg(confirmation)
+        _print_terminal_response(confirmation)
         return confirmation
     else:
-        # ── Step 5: Conversational Q&A fallback (Siri / Alexa style) ────────
+        # ── Step 5: Conversational Q&A fallback (Gemini Siri-style) ───────────
         log.info("No action matched — falling back to answer_question() …")
         answer = answer_question(text)
         log.info("answer_question replied: %r", answer[:80])
-        root.after(0, speak, answer)
+        log_performance("EXECUTION", time.time() - t_exec_start, f"action=conversational_qa query={text!r}")
+        _update_gui_feedback(answer)
+        _speak_bg(answer)
+        _print_terminal_response(answer)
         return answer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# F9 hotkey listener (runs in a daemon thread)
+# Voice Trigger Function
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _start_hotkey_listener(root: tk.Tk) -> None:
-    """Register F9 global hotkey. Blocks via keyboard.wait() in its own thread."""
-
-    def _on_hotkey() -> None:
-        log.info("F9 pressed — starting voice recording …")
+def _on_voice_trigger() -> None:
+    """Record speech via listen_once() and route to handle_command()."""
+    log.info("Voice recording initiated …")
+    _set_gui_listening(True)
+    try:
         text = listen_once()
         if text:
-            # Run handle_command in its own thread so F9 thread is free again
+            log.info("Voice transcription received: %r", text)
+            handle_command(text)
+        else:
+            log.warning("No speech captured.")
+            speak("I did not catch that. Please try again.")
+            _update_gui_feedback("No speech detected.")
+    except Exception as exc:
+        log.error("Voice trigger error: %s", exc)
+        _update_gui_feedback("Voice error occurred.")
+    finally:
+        _set_gui_listening(False)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python API Class Exposed to GUI (via window.pywebview.api)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class DesktopAIAPI:
+    """JS-accessible API exposed to the pywebview frontend."""
+
+    def __init__(self):
+        self._win: Optional[webview.Window] = None
+
+    def set_window(self, win: webview.Window) -> None:
+        self._win = win
+
+    def send_command(self, text: str) -> str:
+        """Called from UI when user submits command."""
+        text = (text or "").strip()
+        if text:
             threading.Thread(
                 target=handle_command,
-                args=(text, root),
-                name="CommandRunner",
-                daemon=True,
-            ).start()
-        else:
-            log.warning("No speech captured after F9.")
-            root.after(0, speak, "I did not catch that. Please try again.")
-
-    keyboard.add_hotkey("ctrl+shift+a", _on_hotkey)
-    log.info("Ctrl+Shift+A hotkey registered.")
-    keyboard.wait()  # blocks — runs in its own thread
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tkinter slim input bar
-# ─────────────────────────────────────────────────────────────────────────────
-
-class InputBar:
-    """A slim always-on-top Tkinter window for typed commands.
-
-    Design:
-      - 420 × 44 px, no title bar, always on top
-      - Draggable by clicking anywhere on the window
-      - Rounded appearance via padded Entry with matching background
-      - Placeholder text dims when empty, clears on focus
-      - Enter key submits; Escape clears the field
-    """
-
-    WIDTH  = 500
-    HEIGHT = 56
-    BG     = "#1e1b2e"       # dark purple-black
-    ACCENT = "#a855f7"       # bright violet (more visible)
-    FG     = "#e2e0ff"       # near-white text
-    PLACEHOLDER = "Type a command and press Enter…"
-
-    def __init__(self, root: tk.Tk, on_submit):
-        self.root = root
-        self.on_submit = on_submit
-        self._drag_x = 0
-        self._drag_y = 0
-
-        self._build()
-
-    def _build(self) -> None:
-        root = self.root
-
-        root.overrideredirect(True)           # no title bar / decorations
-        root.attributes("-topmost", True)     # always on top
-        root.configure(bg=self.BG)
-        root.resizable(False, False)
-
-        # ── Position: top-centre of primary monitor ─────────────────────────
-        screen_w = root.winfo_screenwidth()
-        x = (screen_w - self.WIDTH) // 2
-        y = 20
-        root.geometry(f"{self.WIDTH}x{self.HEIGHT}+{x}+{y}")
-
-        # ── Outer frame (acts as border / accent strip) ──────────────────────
-        outer = tk.Frame(root, bg=self.ACCENT, padx=3, pady=3)
-        outer.pack(fill="both", expand=True)
-
-        inner = tk.Frame(outer, bg=self.BG)
-        inner.pack(fill="both", expand=True)
-
-        # ── Small coloured dot indicator ─────────────────────────────────────
-        dot = tk.Label(inner, text="●", fg=self.ACCENT, bg=self.BG,
-                       font=("Segoe UI", 10))
-        dot.pack(side="left", padx=(8, 0))
-
-        # ── Text entry ────────────────────────────────────────────────────────
-        self._var = tk.StringVar()
-        self._entry = tk.Entry(
-            inner,
-            textvariable=self._var,
-            font=("Segoe UI", 12),
-            bg=self.BG,
-            fg="#888888",            # placeholder colour initially
-            insertbackground=self.FG,
-            relief="flat",
-            bd=0,
-        )
-        self._entry.pack(side="left", fill="both", expand=True, padx=(6, 10), pady=6)
-
-        # Placeholder logic
-        self._entry.insert(0, self.PLACEHOLDER)
-        self._entry.bind("<FocusIn>",  self._on_focus_in)
-        self._entry.bind("<FocusOut>", self._on_focus_out)
-
-        # Submit / clear bindings
-        self._entry.bind("<Return>",  self._on_submit)
-        self._entry.bind("<Escape>",  self._on_escape)
-
-        # Drag bindings (on all widgets)
-        for widget in (root, outer, inner, dot, self._entry):
-            widget.bind("<ButtonPress-1>",   self._drag_start)
-            widget.bind("<B1-Motion>",        self._drag_motion)
-
-    # ── Placeholder helpers ──────────────────────────────────────────────────
-
-    def _on_focus_in(self, _event) -> None:
-        if self._entry.get() == self.PLACEHOLDER:
-            self._entry.delete(0, "end")
-            self._entry.config(fg=self.FG)
-
-    def _on_focus_out(self, _event) -> None:
-        if not self._entry.get().strip():
-            self._entry.insert(0, self.PLACEHOLDER)
-            self._entry.config(fg="#888888")
-
-    # ── Submit / escape ──────────────────────────────────────────────────────
-
-    def _on_submit(self, _event) -> None:
-        text = self._var.get().strip()
-        if text and text != self.PLACEHOLDER:
-            self._entry.delete(0, "end")
-            self._entry.config(fg="#888888")
-            self._entry.insert(0, self.PLACEHOLDER)
-            self._entry.selection_clear()
-            # Run in background thread so Tk stays responsive
-            threading.Thread(
-                target=self.on_submit,
                 args=(text,),
-                name="CommandRunner",
+                name="GUICommandRunner",
                 daemon=True,
             ).start()
+        return "Dispatched"
 
-    def _on_escape(self, _event) -> None:
-        self._entry.delete(0, "end")
-        self._on_focus_out(None)
+    def toggle_mic(self) -> None:
+        """Called from UI when user clicks mic ring."""
+        threading.Thread(
+            target=_on_voice_trigger,
+            name="GUIVoiceRunner",
+            daemon=True,
+        ).start()
 
-    # ── Dragging ─────────────────────────────────────────────────────────────
+    def hide_window(self) -> None:
+        """Hide window to tray from UI close button."""
+        global _is_gui_visible
+        if self._win:
+            self._win.hide()
+            _is_gui_visible = False
 
-    def _drag_start(self, event) -> None:
-        self._drag_x = event.x_root - self.root.winfo_x()
-        self._drag_y = event.y_root - self.root.winfo_y()
-
-    def _drag_motion(self, event) -> None:
-        x = event.x_root - self._drag_x
-        y = event.y_root - self._drag_y
-        self.root.geometry(f"+{x}+{y}")
-
-    # ── Show / hide ──────────────────────────────────────────────────────────
-
-    def show(self) -> None:
-        self.root.deiconify()
-        self.root.attributes("-topmost", True)
-
-    def hide(self) -> None:
-        self.root.withdraw()
-
-    def toggle(self) -> None:
-        if self.root.state() == "withdrawn":
-            self.show()
+    def get_initial_data(self) -> dict:
+        """Return personalized greeting and user info for UI startup."""
+        name = os.getenv("USER_NAME", "").strip() or "Ash"
+        hour = datetime.now().hour
+        if 5 <= hour < 12:
+            eyebrow = "Good Morning"
+        elif 12 <= hour < 17:
+            eyebrow = "Good Afternoon"
+        elif 17 <= hour < 22:
+            eyebrow = "Good Evening"
         else:
-            self.hide()
+            eyebrow = "Late Night"
+        return {"eyebrow": eyebrow, "name": f"{name}."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# System tray
+# Terminal Support Loop (Interactive Development Mode)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_tray_icon: pystray.Icon | None = None
+def _start_terminal_listener() -> None:
+    """Read terminal input in a loop when launched interactively."""
+    time.sleep(1.2)  # Allow greeting & GUI window to initialize cleanly
+    print("\n" + "─" * 58)
+    print("  ✨ Desktop AI — Minimal Luxury Terminal Mode")
+    print("  Type any command below (e.g., 'open chrome', 'search youtube lofi')")
+    print("  Both GUI window and Terminal are active simultaneously.")
+    print("─" * 58 + "\n")
+
+    while True:
+        try:
+            cmd = input("> ")
+            cmd = cmd.strip()
+            if not cmd:
+                continue
+            if cmd.lower() in ("exit", "quit", "q"):
+                print("Shutting down Desktop AI …")
+                global _window, _tray_icon
+                if _tray_icon:
+                    _tray_icon.stop()
+                if _window:
+                    _window.destroy()
+                os._exit(0)
+
+            threading.Thread(
+                target=handle_command,
+                args=(cmd,),
+                name="TerminalCommandRunner",
+                daemon=True,
+            ).start()
+        except (EOFError, KeyboardInterrupt):
+            log.info("Terminal session exited.")
+            break
+        except Exception as exc:
+            log.error("Terminal input error: %s", exc)
 
 
-def _build_tray(root: tk.Tk, bar: InputBar) -> pystray.Icon:
-    """Build the pystray tray icon with Show/Hide and Quit menu items."""
+# ─────────────────────────────────────────────────────────────────────────────
+# Global Hotkey Listener (F9)
+# ─────────────────────────────────────────────────────────────────────────────
 
-    def _toggle_bar(icon, item) -> None:
-        # pystray callbacks run on the tray thread — marshal to Tk main thread
-        root.after(0, bar.toggle)
+def _start_hotkey_listener() -> None:
+    """Register F9 global hotkey."""
+    def _on_hotkey() -> None:
+        log.info("F9 pressed — dispatching voice recording …")
+        threading.Thread(
+            target=_on_voice_trigger,
+            name="HotkeyVoiceRunner",
+            daemon=True,
+        ).start()
+
+    try:
+        keyboard.add_hotkey("f9", _on_hotkey)
+        log.info("F9 global hotkey registered.")
+        keyboard.wait()
+    except Exception as exc:
+        log.warning("Keyboard hotkey registration notice: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# System Tray Icon Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_icon_image(size: int = 64) -> Image.Image:
+    """Return tray icon image (champagne gold accent)."""
+    icon_file = Path(__file__).parent / "icon.png"
+    if icon_file.exists():
+        try:
+            return Image.open(icon_file).resize((size, size))
+        except Exception:
+            pass
+
+    # Draw rounded dark near-black square with champagne gold accent
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle([(2, 2), (size - 2, size - 2)], radius=14, fill=(19, 18, 17))
+    draw.rounded_rectangle([(2, 2), (size - 2, size - 2)], radius=14, outline=(201, 169, 97), width=2)
+    cx, cy, r = size // 2, size // 2, size // 5
+    draw.ellipse([(cx - r, cy - r), (cx + r, cy + r)], fill=(201, 169, 97))
+    return img
+
+
+def _build_tray() -> pystray.Icon:
+    """Build pystray tray icon with Show/Hide and Quit options."""
+    global _window, _is_gui_visible
+
+    def _toggle_window(icon, item) -> None:
+        global _window, _is_gui_visible
+        if _window:
+            if _is_gui_visible:
+                _window.hide()
+                _is_gui_visible = False
+            else:
+                _window.show()
+                _is_gui_visible = True
 
     def _quit_app(icon, item) -> None:
-        log.info("Quit requested from tray.")
+        log.info("Quit requested from system tray.")
         icon.stop()
-        root.after(0, root.destroy)
+        global _window
+        if _window:
+            try:
+                _window.destroy()
+            except Exception:
+                pass
+        os._exit(0)
 
     menu = pystray.Menu(
         pystray.MenuItem("Desktop AI Assistant", None, enabled=False),
         pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Show / Hide text box", _toggle_bar),
+        pystray.MenuItem("Show / Hide window", _toggle_window),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quit", _quit_app),
     )
@@ -382,45 +441,92 @@ def _build_tray(root: tk.Tk, bar: InputBar) -> pystray.Icon:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Main
+# Main Application Entry Point
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    global _tray_icon
+    global _window, _tray_icon
 
-    log.info("Desktop AI Assistant starting up.")
+    log.info("Desktop AI Assistant starting up (Phase 11: Minimal Luxury).")
+    if _BOOTSTRAPPED_ENV:
+        log.warning("Created config/.env from template.")
 
-    # ── Tk root (main thread) ─────────────────────────────────────────────────
-    root = tk.Tk()
-    root.withdraw()   # hide briefly while we build the bar
-
-    # ── Input bar ─────────────────────────────────────────────────────────────
-    bar = InputBar(root, on_submit=lambda text: handle_command(text, root))
-
-    # Show the bar on startup
-    bar.show()
-
-    # ── Startup greeting (edge-tts runs async; do it in a daemon thread) ────────
+    # ── 1. Startup greeting: speak(get_greeting()) once on startup ───────────
+    greeting_text = get_greeting()
+    log.info("Startup greeting: %s", greeting_text)
     greeting_thread = threading.Thread(
         target=speak,
-        args=(get_greeting(),),
+        args=(greeting_text,),
         name="StartupGreeting",
         daemon=True,
     )
     greeting_thread.start()
-    log.info("Startup greeting dispatched.")
 
-    # ── Thread 1: Global F9 hotkey listener ───────────────────────────────────
+    # ── 2. Terminal Support (Interactive vs No-Console check) ────────────────
+    # Check if sys.stdin and sys.stdin.isatty():
+    # If True: start background thread reading terminal input in a loop (input('> '))
+    # If False (no-console .exe): skip entirely so it doesn't crash
+    if sys.stdin and sys.stdin.isatty():
+        log.info("Interactive terminal detected — launching terminal listener thread.")
+        term_thread = threading.Thread(
+            target=_start_terminal_listener,
+            name="TerminalListener",
+            daemon=True,
+        )
+        term_thread.start()
+    else:
+        log.info("No interactive terminal (no-console mode) — terminal listener skipped.")
+
+    # ── 3. Global F9 hotkey listener ─────────────────────────────────────────
     hotkey_thread = threading.Thread(
         target=_start_hotkey_listener,
-        args=(root,),
         name="HotkeyListener",
         daemon=True,
     )
     hotkey_thread.start()
 
-    # ── Thread 2: System tray ─────────────────────────────────────────────────
-    _tray_icon = _build_tray(root, bar)
+    # ── 4. Mobile remote server (Flask on port 5000) ──────────────────────────
+    mobile_thread = threading.Thread(
+        target=start_mobile_server,
+        args=(None, handle_command),
+        name="MobileServer",
+        daemon=True,
+    )
+    mobile_thread.start()
+
+    # ── 5. Setup pywebview Window (Positioned bottom-right) ───────────────────
+    try:
+        user32 = ctypes.windll.user32
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
+    except Exception:
+        screen_w, screen_h = 1920, 1080
+
+    win_w = 380
+    win_h = 560
+    pos_x = max(0, screen_w - win_w - 30)
+    pos_y = max(0, screen_h - win_h - 60)
+
+    ui_path = Path(__file__).resolve().parent / "ui" / "app.html"
+    api = DesktopAIAPI()
+
+    _window = webview.create_window(
+        title="Desktop AI",
+        url=str(ui_path.resolve()),
+        width=win_w,
+        height=win_h,
+        x=pos_x,
+        y=pos_y,
+        frameless=True,
+        on_top=True,
+        background_color="#0b0b0a",
+        js_api=api,
+        easy_drag=False,
+    )
+    api.set_window(_window)
+
+    # ── 6. System Tray Icon ──────────────────────────────────────────────────
+    _tray_icon = _build_tray()
     tray_thread = threading.Thread(
         target=_tray_icon.run,
         name="TrayIcon",
@@ -428,26 +534,15 @@ def main() -> None:
     )
     tray_thread.start()
 
-    # ── Thread 3: Mobile Remote Web Server (Flask) ───────────────────────────
-    mobile_thread = threading.Thread(
-        target=start_mobile_server,
-        args=(root, handle_command),
-        name="MobileServer",
-        daemon=True,
-    )
-    mobile_thread.start()
-    log.info("Mobile Remote server thread dispatched (port 5000).")
-
-    log.info("Tkinter main loop starting.")
-
-    # ── Main thread: Tk event loop (blocking) ─────────────────────────────────
+    # ── 7. Start pywebview (Main Thread GUI Event Loop) ──────────────────────
     try:
-        root.mainloop()
+        log.info("Starting pywebview event loop.")
+        webview.start()
     finally:
-        log.info("Desktop AI Assistant shut down.")
-        if _tray_icon is not None:
+        log.info("Desktop AI Assistant exited.")
+        if _tray_icon:
             _tray_icon.stop()
-        sys.exit(0)
+        os._exit(0)
 
 
 if __name__ == "__main__":

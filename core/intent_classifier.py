@@ -71,6 +71,12 @@ def classify(text: str) -> dict[str, Any] | None:
     if re.search(rf"\b(open\s+(chrome|browser)|(chrome|browser)\s+{_OPEN_VERB})\b", norm):
         return {"action": "launch_app", "target": "chrome"}
 
+    if re.search(rf"\b(open\s+notepad|notepad\s+{_OPEN_VERB})\b", norm) or norm == "notepad":
+        return {"action": "launch_app", "target": "notepad"}
+
+    if re.search(rf"\b(open\s+calc(?:ulator)?|calc(?:ulator)?\s+{_OPEN_VERB})\b", norm) or norm in {"calc", "calculator"}:
+        return {"action": "launch_app", "target": "calculator"}
+
     # --- Spotify Play/Pause and Media Controls ---
     if re.search(r"\b(pause\s+(?:spotify|music|song|gaana)|spotify\s+(?:pause|rok\s*do|roko)|gaana\s+rok(?:o|do)?|music\s+rok(?:o|do)?)\b", norm):
         return {"action": "spotify_play_pause", "target": "pause"}

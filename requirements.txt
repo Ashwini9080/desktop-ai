@@ -2,10 +2,9 @@ groq
 google-genai
 faster-whisper
 sounddevice
-pyaudio
+numpy
 edge-tts
 playsound==1.2.2
-google-generativeai
 python-dotenv
 pystray
 pillow
@@ -14,3 +13,5 @@ feedparser
 requests
 yfinance
 flask
+fastmcp
+pywebview

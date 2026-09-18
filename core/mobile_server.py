@@ -17,7 +17,7 @@ import os
 import socket
 import threading
 import tkinter as tk
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from flask import Flask, jsonify, render_template_string, request
 
@@ -443,10 +443,15 @@ def post_command():
 
     log.info("Mobile command received: %r", text)
 
-    if _command_handler and _root_window:
+    if _command_handler:
         # Execute command through the main pipeline
         try:
-            result = _command_handler(text, _root_window)
+            import inspect
+            sig = inspect.signature(_command_handler)
+            if len(sig.parameters) == 1:
+                result = _command_handler(text)
+            else:
+                result = _command_handler(text, _root_window)
             return jsonify({
                 "status": "ok",
                 "message": result or f"Executed: {text}"
@@ -458,7 +463,33 @@ def post_command():
     return jsonify({"status": "error", "message": "Assistant engine not initialized."}), 503
 
 
-def start_mobile_server(root: tk.Tk, handler: Callable[[str, tk.Tk], str], port: int = 5000) -> None:
+@app.route("/whatsapp", methods=["POST", "GET"])
+def whatsapp_endpoint():
+    """Twilio WhatsApp webhook endpoint."""
+    if request.method == "GET":
+        return "Desktop AI WhatsApp Webhook is active.", 200
+
+    from core.whatsapp_bot import process_whatsapp_message
+
+    body = request.values.get("Body", "")
+    sender = request.values.get("From", "")
+
+    if not _command_handler:
+        return "Assistant engine not initialized.", 503
+
+    def _execute(cmd: str) -> str:
+        import inspect
+        sig = inspect.signature(_command_handler)
+        if len(sig.parameters) == 1:
+            return _command_handler(cmd)
+        else:
+            return _command_handler(cmd, _root_window)
+
+    twiml_resp = process_whatsapp_message(body, sender, _execute)
+    return twiml_resp, 200, {"Content-Type": "application/xml"}
+
+
+def start_mobile_server(root: Optional[Any] = None, handler: Optional[Callable[..., str]] = None, port: int = 5000) -> None:
     """Start the Flask server on 0.0.0.0:port."""
     global _root_window, _command_handler
     _root_window = root

@@ -1,4 +1,18 @@
 @echo off
-cd /d C:\Users\ASHWINI\Downloads\desktop_ai
+setlocal
+cd /d "%~dp0"
+
+:: Activate virtual environment if present
+if exist "venv\Scripts\activate.bat" (
+    call "venv\Scripts\activate.bat"
+) else if exist ".venv\Scripts\activate.bat" (
+    call ".venv\Scripts\activate.bat"
+)
+
 python main.py
-pause
+if errorlevel 1 (
+    echo.
+    echo Desktop AI stopped with an error. Check logs/desktop_ai.log for details.
+    pause
+)
+endlocal

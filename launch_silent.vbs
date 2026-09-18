@@ -1,14 +1,28 @@
 ' launch_silent.vbs
 ' Launches Desktop AI Assistant without showing any console window.
-' Place this file in Windows Startup folder or run it directly.
+' Works from any folder or when shortcut placed in Windows Startup.
 
-Dim objShell
+Option Explicit
+
+Dim fso, objShell, projectDir, pythonExe
+
+Set fso = CreateObject("Scripting.FileSystemObject")
 Set objShell = CreateObject("WScript.Shell")
 
-' Change this path if your project is in a different location
-Dim projectDir
-projectDir = "C:\Users\ASHWINI\Downloads\desktop_ai"
+' Dynamically detect project root folder
+projectDir = fso.GetParentFolderName(WScript.ScriptFullName)
 
-objShell.Run "python """ & projectDir & "\main.py""", 0, False
+' Prefer pythonw in venv if present, otherwise system pythonw
+If fso.FileExists(projectDir & "\venv\Scripts\pythonw.exe") Then
+    pythonExe = """" & projectDir & "\venv\Scripts\pythonw.exe"""
+ElseIf fso.FileExists(projectDir & "\.venv\Scripts\pythonw.exe") Then
+    pythonExe = """" & projectDir & "\.venv\Scripts\pythonw.exe"""
+Else
+    pythonExe = "pythonw"
+End If
+
+objShell.CurrentDirectory = projectDir
+objShell.Run pythonExe & " """ & projectDir & "\main.py""", 0, False
 
 Set objShell = Nothing
+Set fso = Nothing
