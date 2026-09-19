@@ -34,7 +34,8 @@ from typing import Optional
 from dotenv import load_dotenv
 
 # ── Load .env before any core imports (auto-bootstrap from .env.example if missing) ─
-_CONFIG_DIR = Path(__file__).parent / "config"
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_CONFIG_DIR = Path(os.path.join(_BASE_DIR, "config"))
 _ENV_PATH = _CONFIG_DIR / ".env"
 _ENV_EXAMPLE = _CONFIG_DIR / ".env.example"
 
@@ -57,7 +58,9 @@ from core.executor import execute
 from core.greeting import get_greeting
 from core.news import get_news, get_outlet_news, items_to_spoken_summary
 from core.stocks import get_stock_analysis
+from core.validator import validate_action
 from core.mobile_server import start_mobile_server
+from core.phone_control import make_call
 
 import keyboard          # pip install keyboard
 import pystray           # pip install pystray
@@ -100,6 +103,7 @@ def _update_gui_feedback(text: str, status: str = "STANDBY") -> None:
             )
         except Exception as exc:
             log.debug("evaluate_js showFeedback error: %s", exc)
+
 
 
 def _print_terminal_response(response: str) -> None:
@@ -153,6 +157,27 @@ def handle_command(text: str) -> str:
 
     t_exec_start = time.time()
 
+    # ── Step 2.5: Action Validation Layer (Security check) ───────────────────
+    if action_dict and action_dict.get("action") == "blocked_privacy":
+        confirmation = "Privacy Protection active. Your Gmail and Personal Mail will not be touched."
+        log_performance("EXECUTION", 0.0, "action=blocked_privacy")
+        _update_gui_feedback(confirmation)
+        _speak_bg(confirmation)
+        _print_terminal_response(confirmation)
+        return confirmation
+
+    if action_dict and action_dict.get("action") is not None:
+        validated = validate_action(action_dict)
+        if validated is None:
+            log.warning("Security validation failed for action: %s", action_dict)
+            error_msg = "Security alert: Action validation fail ho gaya, command execute nahi kiya."
+            log_performance("EXECUTION", time.time() - t_exec_start, "action=security_rejected")
+            _update_gui_feedback(error_msg, status="ERROR")
+            _speak_bg(error_msg)
+            _print_terminal_response(error_msg)
+            return error_msg
+        action_dict = validated
+
     # ── Step 3: News & Stocks shortcuts ──────────────────────────────────────
     if action_dict:
         action = action_dict.get("action")
@@ -165,6 +190,11 @@ def handle_command(text: str) -> str:
             spoken = items_to_spoken_summary(items, label)
             log_performance("EXECUTION", time.time() - t_exec_start, f"action=get_news target={target}")
             _update_gui_feedback(spoken)
+            try:
+                from core.news_ui import show_news_popup
+                show_news_popup(items=items, title=f"{label} News")
+            except Exception as exc:
+                log.debug("Could not launch news popup: %s", exc)
             _speak_bg(spoken)
             _print_terminal_response(spoken)
             return spoken
@@ -176,6 +206,11 @@ def handle_command(text: str) -> str:
             spoken = items_to_spoken_summary(items, label)
             log_performance("EXECUTION", time.time() - t_exec_start, f"action=get_outlet_news target={target}")
             _update_gui_feedback(spoken)
+            try:
+                from core.news_ui import show_news_popup
+                show_news_popup(items=items, title=f"{label} News")
+            except Exception as exc:
+                log.debug("Could not launch news popup: %s", exc)
             _speak_bg(spoken)
             _print_terminal_response(spoken)
             return spoken
@@ -192,6 +227,15 @@ def handle_command(text: str) -> str:
             _print_terminal_response(analysis)
             return analysis
 
+        if action == "make_call":
+            log.info("Initiating phone call [target=%s] …", target)
+            call_result = make_call(contact_name=str(target))
+            log_performance("EXECUTION", time.time() - t_exec_start, f"action=make_call target={target}")
+            _update_gui_feedback(call_result)
+            _speak_bg(call_result)
+            _print_terminal_response(call_result)
+            return call_result
+
     # ── Step 4: Execute OS Actions ───────────────────────────────────────────
     if action_dict and action_dict.get("action") is not None:
         result_msg = execute(action_dict)
@@ -202,7 +246,10 @@ def handle_command(text: str) -> str:
         if action == "launch_app":
             confirmation = f"Opening {target}."
         elif action == "open_url":
-            confirmation = "Opening website."
+            if "Privacy Protection" in result_msg:
+                confirmation = result_msg
+            else:
+                confirmation = "Opening website."
         elif action == "open_folder":
             confirmation = f"Opening {target} folder."
         elif action == "search_youtube":
@@ -217,6 +264,8 @@ def handle_command(text: str) -> str:
             confirmation = "Playing previous song on Spotify."
         elif action == "spotify_search":
             confirmation = f"Searching and playing {target} on Spotify."
+        elif action == "media_control":
+            confirmation = f"Media playback updated: {target or 'toggled'}."
         elif action == "blocked_privacy":
             confirmation = "Privacy Protection active. Your Gmail and Personal Mail will not be touched."
         else:
@@ -463,9 +512,6 @@ def main() -> None:
     greeting_thread.start()
 
     # ── 2. Terminal Support (Interactive vs No-Console check) ────────────────
-    # Check if sys.stdin and sys.stdin.isatty():
-    # If True: start background thread reading terminal input in a loop (input('> '))
-    # If False (no-console .exe): skip entirely so it doesn't crash
     if sys.stdin and sys.stdin.isatty():
         log.info("Interactive terminal detected — launching terminal listener thread.")
         term_thread = threading.Thread(

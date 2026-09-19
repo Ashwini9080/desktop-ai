@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import threading
 import tkinter as tk
+import webbrowser
 from typing import Optional
 
 import requests
@@ -109,9 +110,14 @@ class _NewsPopup:
                          text="📰", font=("Segoe UI", 24))
         thumb.pack(fill="both", expand=True)
 
-        url = item.get("image_url")
-        if url:
-            threading.Thread(target=self._load_thumb, args=(thumb, url),
+        article_url = item.get("url") or item.get("link")
+        if article_url:
+            thumb.config(cursor="hand2")
+            thumb.bind("<Button-1>", lambda _, u=article_url: webbrowser.open(u))
+
+        img_url = item.get("image_url")
+        if img_url:
+            threading.Thread(target=self._load_thumb, args=(thumb, img_url),
                              daemon=True).start()
 
         # Text
@@ -119,14 +125,36 @@ class _NewsPopup:
         col.pack(side="left", fill="both", expand=True)
 
         wrap = _POPUP_W - _THUMB_W - 60
+
+        # Source and Published Date line
+        meta_parts = []
         if item.get("source"):
-            tk.Label(col, text=item["source"], bg=_CARD_BG, fg=_ACCENT,
-                     font=("Segoe UI", 9, "bold"), anchor="w",
+            meta_parts.append(item["source"])
+        if item.get("published"):
+            meta_parts.append(str(item["published"]))
+        if meta_parts:
+            tk.Label(col, text=" • ".join(meta_parts), bg=_CARD_BG, fg=_ACCENT,
+                     font=("Segoe UI", 8, "bold"), anchor="w",
                      wraplength=wrap).pack(anchor="w")
 
-        tk.Label(col, text=item.get("headline", ""), bg=_CARD_BG, fg=_TEXT,
-                 font=("Segoe UI", 10), anchor="w", justify="left",
-                 wraplength=wrap).pack(anchor="w", pady=(4, 0))
+        # Headline
+        hl = tk.Label(col, text=item.get("headline", ""), bg=_CARD_BG, fg=_TEXT,
+                      font=("Segoe UI", 10), anchor="w", justify="left",
+                      wraplength=wrap, cursor="hand2" if article_url else "")
+        hl.pack(anchor="w", pady=(4, 0))
+
+        if article_url:
+            def _open_link(_event=None, u=article_url):
+                try:
+                    webbrowser.open(u)
+                except Exception as exc:
+                    log.error("Failed to open article URL %s: %s", u, exc)
+
+            hl.bind("<Button-1>", _open_link)
+            link_lbl = tk.Label(col, text="🔗 Read article ↗", bg=_CARD_BG, fg=_ACCENT,
+                                font=("Segoe UI", 8, "underline"), cursor="hand2")
+            link_lbl.pack(anchor="w", pady=(3, 0))
+            link_lbl.bind("<Button-1>", _open_link)
 
     def _load_thumb(self, label: tk.Label, url: str) -> None:
         photo = _fetch_thumbnail(url)
@@ -167,9 +195,19 @@ class _NewsPopup:
         self._win.geometry(f"+{event.x_root - self._dx}+{event.y_root - self._dy}")
 
 
-def show_news_popup(root: tk.Tk, items: list[dict], title: str = "Headlines") -> None:
-    """Open the news popup. Must be called from the Tk main thread."""
+def show_news_popup(root: Optional[tk.Tk] = None, items: Optional[list[dict]] = None, title: str = "Headlines") -> None:
+    """Open the news popup. Can be called with (root, items, title) or (items=items, title=title)."""
+    if isinstance(root, list):
+        items, title, root = root, (items if isinstance(items, str) else "Headlines"), None
     if not items:
         return
     log.info("Opening news popup: %r (%d items)", title, len(items))
-    _NewsPopup(root, items, title)
+    if root is None:
+        def _run_popup():
+            r = tk.Tk()
+            r.withdraw()
+            _NewsPopup(r, items, title)
+            r.mainloop()
+        threading.Thread(target=_run_popup, daemon=True).start()
+    else:
+        _NewsPopup(root, items, title)

@@ -15,3 +15,5 @@ yfinance
 flask
 fastmcp
 pywebview
+flask-limiter
+psutil

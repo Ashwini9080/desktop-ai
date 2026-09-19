@@ -23,7 +23,8 @@ import numpy as np
 import sounddevice as sd
 from dotenv import load_dotenv
 
-load_dotenv(Path("config/.env"))
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(dotenv_path=os.path.join(_BASE_DIR, "config", ".env"))
 
 from core.intent_classifier import classify
 from core.executor import execute

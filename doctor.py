@@ -108,9 +108,11 @@ def check_dependencies() -> dict[str, bool]:
         ("yfinance", "yfinance"),
         ("flask", "flask"),
         ("fastmcp", "fastmcp (Model Context Protocol server)"),
+        ("psutil", "psutil (System performance monitoring)"),
         ("groq", "groq (Whisper STT & instant Q&A)"),
         ("google.genai", "google-genai (Gemini fallback)"),
     ]
+
 
     missing_core = []
     missing_ai = []
@@ -185,7 +187,7 @@ def main() -> None:
     print(" [+] Desktop AI -- System Diagnostic & Health Check")
     print("=" * 60)
 
-    root = Path(__file__).resolve().parent
+    root = Path(os.path.dirname(os.path.abspath(__file__)))
 
     print("\n[1] Environment & Python")
     py_ok = check_python_version()

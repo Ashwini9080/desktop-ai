@@ -28,12 +28,15 @@ import sounddevice as sd
 from dotenv import load_dotenv
 from groq import Groq
 from playsound import playsound
+from faster_whisper import WhisperModel
 
 from core.logger import get_logger, log_performance
 
 log = get_logger(__name__)
 
-load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / "config" / ".env")
+_CORE_DIR = os.path.dirname(os.path.abspath(__file__))
+_BASE_DIR = os.path.dirname(_CORE_DIR)
+load_dotenv(dotenv_path=Path(os.path.join(_BASE_DIR, "config", ".env")))
 
 # Audio config — Whisper expects 16 kHz mono 16-bit PCM
 HOTKEY             = "f9"
@@ -56,6 +59,16 @@ HINGLISH_PROMPT    = (
 )
 
 _TTS_VOICE = "en-GB-ThomasNeural"
+
+# Load faster-whisper WhisperModel ONCE at module level (outside any function) for reuse
+_whisper_model: Optional[WhisperModel] = None
+try:
+    log.info("Loading faster-whisper WhisperModel (%s, %s) at module level...", LOCAL_MODEL_SIZE, LOCAL_COMPUTE_TYPE)
+    _whisper_model = WhisperModel(LOCAL_MODEL_SIZE, compute_type=LOCAL_COMPUTE_TYPE)
+    log.info("faster-whisper WhisperModel loaded successfully.")
+except Exception as _exc:
+    log.warning("Could not pre-load faster-whisper model at module import: %s", _exc)
+    _whisper_model = None
 
 
 # ---------------------------------------------------------------------------
@@ -205,10 +218,12 @@ def _transcribe_groq(wav_path: str, api_key: str) -> str:
 
 
 def _transcribe_local(wav_path: str) -> str:
+    global _whisper_model
     t0 = time.time()
-    from faster_whisper import WhisperModel
-    model = WhisperModel(LOCAL_MODEL_SIZE, compute_type=LOCAL_COMPUTE_TYPE)
-    segments, _ = model.transcribe(wav_path, beam_size=5, initial_prompt=HINGLISH_PROMPT, language=None)
+    if _whisper_model is None:
+        log.info("Initializing faster-whisper WhisperModel as fallback...")
+        _whisper_model = WhisperModel(LOCAL_MODEL_SIZE, compute_type=LOCAL_COMPUTE_TYPE)
+    segments, _ = _whisper_model.transcribe(wav_path, beam_size=5, initial_prompt=HINGLISH_PROMPT, language=None)
     result = " ".join(seg.text for seg in segments)
     t_trans = time.time() - t0
     log_performance("TRANSCRIPTION", t_trans, f"engine=faster-whisper result={result!r}")

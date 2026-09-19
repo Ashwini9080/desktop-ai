@@ -8,6 +8,7 @@ Logs are written to  <project_root>/logs/desktop_ai.log
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -21,7 +22,7 @@ def _resolve_project_root() -> Path:
     """Return the project root directory."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
-    return Path(__file__).resolve().parents[1]
+    return Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _resolve_log_dir() -> Path:

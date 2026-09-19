@@ -26,3 +26,8 @@ Thumbs.db
 *.log
 performance.log
 logs/*.log
+
+# Android platform-tools & archives
+platform-tools/
+*.zip
+

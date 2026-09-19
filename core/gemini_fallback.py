@@ -29,7 +29,9 @@ from core.logger import get_logger
 log = get_logger(__name__)
 
 # Load .env from config/ directory — works regardless of cwd
-_ENV_PATH = Path(__file__).resolve().parent.parent / "config" / ".env"
+_CORE_DIR = os.path.dirname(os.path.abspath(__file__))
+_BASE_DIR = os.path.dirname(_CORE_DIR)
+_ENV_PATH = Path(os.path.join(_BASE_DIR, "config", ".env"))
 load_dotenv(dotenv_path=_ENV_PATH)
 
 

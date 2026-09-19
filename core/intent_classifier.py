@@ -35,7 +35,7 @@ def _norm(text: str) -> str:
     if not text:
         return ""
     t = text.lower().strip()
-    t = re.sub(r"^[^\w]+|[^\w.\/]+$", "", t)
+    t = re.sub(r"^[^\w+]+|[^\w.\/]+$", "", t)
     return re.sub(r"\s+", " ", t)
 
 
@@ -54,6 +54,20 @@ def classify(text: str) -> dict[str, Any] | None:
     # --- Privacy protection: Block Gmail and Mail access ---
     if re.search(r"\b(gmail|email|e-mail|my\s+mail|inbox)\b", norm):
         return {"action": "blocked_privacy", "target": "gmail"}
+
+    # --- Phone Call (ADB) ---
+    # Patterns: '[name] ko call karo' / 'call [name]' / '[name] ko phone lagao'
+    m = re.search(r"^(?:please\s+)?call\s+(?:to\s+)?([a-zA-Z0-9_\-\+\s]+)$", norm)
+    if m:
+        target = m.group(1).strip()
+        if target and target not in {"karo", "lagao", "kar do", "him", "her"}:
+            return {"action": "make_call", "target": target}
+
+    m = re.search(r"^([a-zA-Z0-9_\-\+\s]+?)\s+ko\s+(?:call|phone)\s+(?:karo|kar\s*do|lagao|milao|laga\s*do)$", norm)
+    if m:
+        target = m.group(1).strip()
+        if target:
+            return {"action": "make_call", "target": target}
 
     # --- App launches ---
     if re.search(rf"\b(open\s+antigravity|antigravity\s+({_OPEN_VERB}))\b", norm) \

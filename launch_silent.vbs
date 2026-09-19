@@ -4,18 +4,18 @@
 
 Option Explicit
 
-Dim fso, objShell, projectDir, pythonExe
+Dim objFSO, objShell, projectDir, pythonExe
 
-Set fso = CreateObject("Scripting.FileSystemObject")
+Set objFSO = CreateObject("Scripting.FileSystemObject")
 Set objShell = CreateObject("WScript.Shell")
 
 ' Dynamically detect project root folder
-projectDir = fso.GetParentFolderName(WScript.ScriptFullName)
+projectDir = objFSO.GetParentFolderName(WScript.ScriptFullName)
 
 ' Prefer pythonw in venv if present, otherwise system pythonw
-If fso.FileExists(projectDir & "\venv\Scripts\pythonw.exe") Then
+If objFSO.FileExists(projectDir & "\venv\Scripts\pythonw.exe") Then
     pythonExe = """" & projectDir & "\venv\Scripts\pythonw.exe"""
-ElseIf fso.FileExists(projectDir & "\.venv\Scripts\pythonw.exe") Then
+ElseIf objFSO.FileExists(projectDir & "\.venv\Scripts\pythonw.exe") Then
     pythonExe = """" & projectDir & "\.venv\Scripts\pythonw.exe"""
 Else
     pythonExe = "pythonw"
@@ -25,4 +25,4 @@ objShell.CurrentDirectory = projectDir
 objShell.Run pythonExe & " """ & projectDir & "\main.py""", 0, False
 
 Set objShell = Nothing
-Set fso = Nothing
+Set objFSO = Nothing
